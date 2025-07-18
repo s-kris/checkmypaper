@@ -1,0 +1,144 @@
+# **Prompt for Building an MVP: AI PDF Answer Sheet Grader with React and tRPC**
+
+## **Persona**
+
+You are a senior full-stack AI engineer with expertise in modern web technologies, including the "T3 Stack" (TypeScript, tRPC, Tailwind) and building AI-powered applications. You are proficient in creating type-safe, end-to-end applications and integrating with third-party services like Google Cloud.
+
+## **MVP Goal**
+
+The goal is to build a **Minimum Viable Product (MVP)** that demonstrates the core AI grading functionality using a modern, type-safe stack. This MVP will be a single-page web application where a teacher can upload two **PDF files**—a scanned, handwritten answer key and a scanned, handwritten student's answer sheet—and receive an AI-generated evaluation.
+
+**This MVP will deliberately exclude:**
+*   User authentication and databases.
+*   Complex multi-page routing.
+*   Persistent storage of results.
+
+## **Core MVP Workflow**
+
+1.  **User Interaction:** A teacher visits the React single-page application.
+2.  **PDF Upload:** The teacher uses two file inputs to select the answer key PDF and the student's sheet PDF.
+3.  **tRPC Mutation:** Upon clicking a "Grade" button, the frontend makes a type-safe API call (a tRPC mutation) to the backend, sending the content of the two PDF files.
+4.  **Backend Processing:** The Node.js/TypeScript backend receives the request and performs a multi-step process:
+    a. Converts the incoming PDFs into image format.
+    b. Sends the images to an OCR service to extract handwritten text.
+    c. Sends the extracted texts to a Large Language Model (LLM) for evaluation.
+5.  **Return Data:** The backend returns the AI-generated report (as a Markdown string) through the tRPC procedure.
+6.  **Display Results:** The React frontend receives the Markdown report and renders it in a user-friendly format.
+
+## **Technical Stack**
+
+*   **Project Structure:** A monorepo using `pnpm` workspaces to share code and types between the frontend and backend.
+*   **Backend:** **Node.js** with **TypeScript**.
+*   **API Layer:** **tRPC** for end-to-end type-safe API calls.
+*   **Frontend:** **React (via Vite.js)** with **TypeScript**.
+*   **PDF Processing:** A Node.js library capable of converting PDF pages to images, such as **`pdf-poppler`** or **`pdf2pic`**.
+*   **AI Services:**
+    *   **OCR:** Google Cloud Vision API (using the `@google-cloud/vision` Node.js client). [19, 25, 26]
+    *   **LLM:** Google Gemini API (using the `@google/generative-ai` Node.js client).
+
+## **Step-by-Step Implementation Guide for the MVP**
+
+Please follow these precise steps to build the application.
+
+### **Step 1: Monorepo and Project Setup**
+
+1.  Initialize a new project directory with `pnpm`.
+2.  Create a `packages` folder.
+3.  Inside `packages`, create two sub-projects:
+    *   **`api`**: For the backend tRPC server. Initialize a `package.json` and a `tsconfig.json` for a Node.js environment.
+    *   **`web`**: For the frontend React app. Initialize a new React + TypeScript project using `vite`.
+4.  Configure the root `pnpm-workspace.yaml` to recognize both packages.
+
+### **Step 2: Backend tRPC Server (`packages/api`)**
+
+1.  **Install Dependencies:** `express`, `cors`, `@trpc/server`, `zod`, `@google-cloud/vision`, `@google/generative-ai`, and a PDF-to-image library like `pdf-poppler`.
+2.  **Initialize tRPC:** Create a `trpc.ts` file to initialize and export the tRPC router context.
+3.  **Define the API Router:** Create an `appRouter`. This router will define all your API procedures.
+4.  **Create the `gradeSheet` Mutation:**
+    *   Define a single tRPC mutation named `gradeSheet`.
+    *   **Input Schema:** Use `zod` to define the input schema. Since files are best sent as strings in JSON-based APIs, the schema should be:
+        ```typescript
+        z.object({
+          answerKeyPdfBase64: z.string(),
+          studentSheetPdfBase64: z.string(),
+        })
+        ```
+    *   This mutation will contain the core grading logic (detailed in Step 5).
+5.  **Create the Server:** Set up a simple Express server to host the tRPC router using the `@trpc/server/adapters/express` adapter.
+
+### **Step 3: Frontend React App (`packages/web`)**
+
+1.  **Install Dependencies:** `@trpc/client`, `@trpc/react-query`, `@tanstack/react-query`, and a Markdown renderer like `react-markdown`.
+2.  **Configure tRPC Client:** Create a `utils/trpc.ts` file to initialize the tRPC client. It should point to your backend server's URL (e.g., `http://localhost:4000/trpc`).
+3.  **Provide tRPC Context:** In your main `App.tsx` or `main.tsx`, wrap your application with the `QueryClientProvider` and the `trpc.Provider`.
+4.  **Create the UI Component (`Grader.tsx`):**
+    *   This component will contain the UI: two `<input type="file" accept=".pdf" />` fields and a submit button.
+    *   Use `useState` to manage the selected files.
+    *   Use the `trpc.gradeSheet.useMutation()` hook to get access to the mutation function.
+
+### **Step 4: Frontend Logic (File Handling and API Call)**
+
+1.  **File to Base64 Conversion:** Create a utility function that takes a `File` object and returns a `Promise<string>`. This function will use the `FileReader` API (`readAsDataURL`) to convert the selected PDFs into Base64 encoded strings.
+2.  **Handle Form Submission:**
+    *   On button click, prevent the default form submission.
+    *   Convert both the selected answer key PDF and student sheet PDF to Base64 strings using your utility function.
+    *   Call the tRPC mutation with the Base64 strings: `gradeMutation.mutate({ answerKeyPdfBase64: '...', studentSheetPdfBase64: '...' });`
+3.  **Display State:** Use the values from the `gradeMutation` hook to provide user feedback:
+    *   `isLoading`: Show a loading spinner or message.
+    *   `error`: Display any errors that occur.
+    *   `data`: When the data is returned, render it (see Step 6).
+
+### **Step 5: Core AI Logic (Inside the `gradeSheet` Backend Mutation)**
+
+This is the sequence of operations within your tRPC procedure in `packages/api`.
+
+1.  **Decode Base64 and Convert PDF to Image:**
+    *   Take the `answerKeyPdfBase64` and `studentSheetPdfBase64` strings from the input.
+    *   Decode them from Base64 into `Buffer` objects.
+    *   For each buffer, use the `pdf-poppler` library to convert the **first page** of the PDF into a high-resolution PNG image buffer.
+2.  **Perform OCR:**
+    *   Take the resulting PNG image buffers.
+    *   For each image buffer, send it to the **Google Cloud Vision API** using the Node.js client library to perform `documentTextDetection`.
+    *   Extract the full text annotation from the API response for both the key and the student sheet. Store these in `answer_key_text` and `student_sheet_text` variables.
+3.  **Evaluate with LLM:**
+    *   Construct the following detailed prompt for the **Google Gemini API**:
+        ```
+        You are an expert and meticulous AI English Teacher's Assistant. Your task is to grade a student's handwritten answer sheet by comparing it against a teacher's provided answer key.
+
+        Here is the text extracted from the teacher's Answer Key:
+        ---
+        [Insert the 'answer_key_text' variable here]
+        ---
+
+        Here is the text extracted from the Student's Answer Sheet:
+        ---
+        [Insert the 'student_sheet_text' variable here]
+        ---
+
+        Please perform the following actions:
+        1.  First, analyze both texts to identify the individual questions and their corresponding answers. Assume the documents follow a logical question-and-answer format.
+        2.  For each question, compare the student's answer to the model answer from the key based on semantic meaning and key concepts, not just exact keyword matching.
+        3.  Assume each question is worth 10 points for this evaluation.
+        4.  Generate a final report in Markdown format. For each question, provide a score and brief, constructive feedback.
+
+        Your final output **must** be only the Markdown report, structured exactly like this example:
+
+        ### Question 1
+        **Score:** 8/10
+        **Feedback:** The student correctly identified the main theme but missed mentioning the secondary character's motivation, which was a key part of the model answer.
+
+        ### Question 2
+        **Score:** 10/10
+        **Feedback:** Excellent. The answer is comprehensive and aligns perfectly with the model answer.
+        ```
+    *   Send this prompt to the Gemini API and await the response string.
+4.  **Return Result:** Return the Markdown string from the Gemini API as the result of the tRPC procedure.
+
+### **Step 6: Displaying Results (Frontend)**
+
+1.  In your `Grader.tsx` component, the `gradeMutation.data` variable will hold the Markdown string returned by the backend.
+2.  Use the `react-markdown` component to render this string directly into your JSX.
+    ```jsx
+    {gradeMutation.data && <ReactMarkdown>{gradeMutation.data}</ReactMarkdown>}
+    ```
+This will automatically convert the Markdown into clean HTML, displaying the final, formatted report to the teacher.
